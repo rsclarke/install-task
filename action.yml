@@ -1,0 +1,172 @@
+name: "Install go-task/task"
+description: "Downloads and installs go-task/task binary to the tool cache with mandatory checksum verification (Linux/macOS only)"
+author: "rsclarke"
+branding:
+  icon: "package"
+  color: "blue"
+
+inputs:
+  version:
+    description: "Version of go-task/task to install (e.g., v3.29.1). If not specified, latest release will be used."
+    required: false
+    default: ""
+  github-token:
+    description: "GitHub token to use for API requests. Only needed if fetching latest version."
+    required: false
+    default: ""
+
+outputs:
+  task_path:
+    description: "Path to the installed task binary"
+    value: ${{ steps.install-task.outputs.task_path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Task
+      id: install-task
+      shell: bash
+      run: |
+        echo "Install Task - Starting installation with checksum verification"
+
+        # Check for supported OS
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          echo "Windows is not supported by this action"
+          exit 1
+        fi
+
+        # Determine version to install
+        if [[ -z "${{ inputs.version }}" ]]; then
+          echo "No version specified, fetching latest release..."
+
+          # Use GitHub API to get latest release
+          if [[ -n "${{ inputs.github-token }}" ]]; then
+            AUTH_HEADER="Authorization: token ${{ inputs.github-token }}"
+          else
+            AUTH_HEADER=""
+          fi
+
+          LATEST_RELEASE=$(curl -s -H "${AUTH_HEADER}" https://api.github.com/repos/go-task/task/releases/latest)
+
+          if [[ $? -eq 0 && -n "${LATEST_RELEASE}" ]]; then
+            TASK_VERSION=$(echo "${LATEST_RELEASE}" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
+            if [[ -z "${TASK_VERSION}" ]]; then
+              echo "Failed to parse latest release version, falling back to default"
+              TASK_VERSION="v3.29.1"
+            fi
+          else
+            echo "Failed to fetch latest release, falling back to default"
+            TASK_VERSION="v3.29.1"
+          fi
+        else
+          TASK_VERSION="${{ inputs.version }}"
+        fi
+
+        echo "Installing Task version: ${TASK_VERSION}"
+
+        # Determine OS and architecture
+        case "$RUNNER_OS" in
+          macOS)
+            OS="darwin"
+            CHECKSUM_CMD="shasum -a 256"
+            ;;
+          Linux)
+            OS="linux"
+            CHECKSUM_CMD="sha256sum"
+            ;;
+          *)
+            echo "Unsupported OS: $RUNNER_OS"
+            exit 1
+            ;;
+        esac
+
+        case "$RUNNER_ARCH" in
+          X64)
+            ARCH="amd64"
+            ;;
+          ARM64)
+            ARCH="arm64"
+            ;;
+          *)
+            echo "Unsupported architecture: $RUNNER_ARCH"
+            exit 1
+            ;;
+        esac
+
+        # Download URL construction
+        TASK_DIST="task_${OS}_${ARCH}"
+        DOWNLOAD_URL="https://github.com/go-task/task/releases/download/${TASK_VERSION}/${TASK_DIST}.tar.gz"
+        CHECKSUMS_URL="https://github.com/go-task/task/releases/download/${TASK_VERSION}/task_checksums.txt"
+
+        # Create temp directory
+        TEMP_DIR=$(mktemp -d)
+
+        # Download the archive
+        echo "Downloading from: ${DOWNLOAD_URL}"
+        curl -sL "${DOWNLOAD_URL}" -o "${TEMP_DIR}/task.tar.gz"
+
+        if [[ $? -ne 0 ]]; then
+          echo "Failed to download Task from ${DOWNLOAD_URL}"
+          exit 1
+        fi
+
+        # Verify checksum (mandatory)
+        echo "Verifying checksum..."
+
+        # Download checksums file
+        curl -sL "${CHECKSUMS_URL}" -o "${TEMP_DIR}/task_checksums.txt"
+
+        if [[ $? -ne 0 ]]; then
+          echo "Failed to download checksums from ${CHECKSUMS_URL}"
+          exit 1
+        fi
+
+        # Extract expected checksum for this distribution
+        EXPECTED_CHECKSUM=$(grep "${TASK_DIST}.tar.gz" "${TEMP_DIR}/task_checksums.txt" | awk '{print $1}')
+
+        if [[ -z "${EXPECTED_CHECKSUM}" ]]; then
+          echo "Failed to find checksum for ${TASK_DIST}.tar.gz in checksums file"
+          exit 1
+        fi
+
+        # Calculate actual checksum
+        ACTUAL_CHECKSUM=$(cd "${TEMP_DIR}" && ${CHECKSUM_CMD} task.tar.gz | awk '{print $1}')
+
+        # Compare checksums
+        if [[ "${EXPECTED_CHECKSUM}" != "${ACTUAL_CHECKSUM}" ]]; then
+          echo "Checksum verification failed!"
+          echo "Expected: ${EXPECTED_CHECKSUM}"
+          echo "Actual: ${ACTUAL_CHECKSUM}"
+          echo "Security verification failed - aborting installation"
+          exit 1
+        fi
+
+        echo "Checksum verified successfully"
+
+        # Extract the archive
+        tar -xzf "${TEMP_DIR}/task.tar.gz" -C "${TEMP_DIR}"
+
+        # Create tool cache directory
+        VERSION_WITHOUT_V="${TASK_VERSION#v}"
+        TOOL_CACHE="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}"
+        mkdir -p "${TOOL_CACHE}"
+
+        # Install to tool cache
+        mv "${TEMP_DIR}/task" "${TOOL_CACHE}/"
+        chmod +x "${TOOL_CACHE}/task"
+
+        # Add to PATH
+        echo "${TOOL_CACHE}" >> $GITHUB_PATH
+        echo "task_path=${TOOL_CACHE}" >> $GITHUB_OUTPUT
+
+        # Clean up
+        rm -rf "${TEMP_DIR}"
+
+        # Verify installation
+        "${TOOL_CACHE}/task" --version
+
+    - name: Verify Task Installation
+      shell: bash
+      run: |
+        echo "Task installed at: ${{ steps.install-task.outputs.task_path }}"
+        task --version
