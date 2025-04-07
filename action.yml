@@ -35,35 +35,6 @@ runs:
           exit 1
         fi
 
-        # Determine version to install
-        if [[ -z "${{ inputs.version }}" ]]; then
-          echo "No version specified, fetching latest release..."
-
-          # Use GitHub API to get latest release
-          if [[ -n "${{ inputs.github-token }}" ]]; then
-            AUTH_HEADER="Authorization: token ${{ inputs.github-token }}"
-          else
-            AUTH_HEADER=""
-          fi
-
-          LATEST_RELEASE=$(curl -s -H "${AUTH_HEADER}" https://api.github.com/repos/go-task/task/releases/latest)
-
-          if [[ $? -eq 0 && -n "${LATEST_RELEASE}" ]]; then
-            TASK_VERSION=$(echo "${LATEST_RELEASE}" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
-            if [[ -z "${TASK_VERSION}" ]]; then
-              echo "Failed to parse latest release version, falling back to default"
-              TASK_VERSION="v3.29.1"
-            fi
-          else
-            echo "Failed to fetch latest release, falling back to default"
-            TASK_VERSION="v3.29.1"
-          fi
-        else
-          TASK_VERSION="${{ inputs.version }}"
-        fi
-
-        echo "Installing Task version: ${TASK_VERSION}"
-
         # Determine OS and architecture
         case "$RUNNER_OS" in
           macOS)
@@ -92,6 +63,74 @@ runs:
             exit 1
             ;;
         esac
+
+        # Flag to track if we're using latest version
+        USING_LATEST=false
+
+        # Determine version to install
+        if [[ -z "${{ inputs.version }}" ]]; then
+          echo "No version specified, fetching latest release..."
+          USING_LATEST=true
+
+          # Use GitHub API to get latest release
+          if [[ -n "${{ inputs.github-token }}" ]]; then
+            AUTH_HEADER="Authorization: token ${{ inputs.github-token }}"
+          else
+            AUTH_HEADER=""
+          fi
+
+          LATEST_RELEASE=$(curl -s -H "${AUTH_HEADER}" https://api.github.com/repos/go-task/task/releases/latest)
+
+          if [[ $? -eq 0 && -n "${LATEST_RELEASE}" ]]; then
+            TASK_VERSION=$(echo "${LATEST_RELEASE}" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
+            if [[ -z "${TASK_VERSION}" ]]; then
+              echo "Failed to parse latest release version, falling back to default"
+              TASK_VERSION="v3.29.1"
+            fi
+          else
+            echo "Failed to fetch latest release, falling back to default"
+            TASK_VERSION="v3.29.1"
+          fi
+        else
+          TASK_VERSION="${{ inputs.version }}"
+        fi
+
+        echo "Installing Task version: ${TASK_VERSION}"
+        VERSION_WITHOUT_V="${TASK_VERSION#v}"
+        TOOL_CACHE="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}"
+
+        # Check if requested version is already in the tool cache
+        # Only check cache if not using latest version
+        if [[ "${USING_LATEST}" == "false" && -f "${TOOL_CACHE}/task" ]]; then
+          echo "Found Task binary in the tool cache, verifying version..."
+
+          # Make executable if needed
+          chmod +x "${TOOL_CACHE}/task"
+
+          # Check if the version matches what we want
+          CACHED_VERSION=$("${TOOL_CACHE}/task" --version | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+
+          if [[ "${CACHED_VERSION}" == "${VERSION_WITHOUT_V}" ]]; then
+            echo "Verified Task ${TASK_VERSION} in the tool cache"
+
+            # Add to PATH
+            echo "${TOOL_CACHE}" >> $GITHUB_PATH
+            echo "task_path=${TOOL_CACHE}" >> $GITHUB_OUTPUT
+
+            # Verify installation
+            "${TOOL_CACHE}/task" --version
+            exit 0
+          else
+            echo "Tool cache contains version ${CACHED_VERSION}, but we need ${VERSION_WITHOUT_V}. Will download required version."
+          fi
+        else
+          # If version not in cache or using latest, download and install
+          if [[ "${USING_LATEST}" == "true" ]]; then
+            echo "Always downloading latest release (${TASK_VERSION})"
+          else
+            echo "Task ${TASK_VERSION} not found in cache, installing..."
+          fi
+        fi
 
         # Download URL construction
         TASK_DIST="task_${OS}_${ARCH}"
@@ -147,8 +186,6 @@ runs:
         tar -xzf "${TEMP_DIR}/task.tar.gz" -C "${TEMP_DIR}"
 
         # Create tool cache directory
-        VERSION_WITHOUT_V="${TASK_VERSION#v}"
-        TOOL_CACHE="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}"
         mkdir -p "${TOOL_CACHE}"
 
         # Install to tool cache
