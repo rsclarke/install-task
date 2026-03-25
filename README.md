@@ -2,6 +2,20 @@
 
 This GitHub Action installs [go-task/task](https://github.com/go-task/task) to the GitHub Actions runner tool cache and adds it to the PATH. It **always** verifies the downloaded archive against official checksums.
 
+## Versioning
+
+From **v2.0.0** onwards this action uses **immutable releases** with full semantic versioning (`vMAJOR.MINOR.PATCH`). Floating major tags (e.g., `v2`) are **not** provided.
+
+When referencing this action, either use the full version string or pin to a commit SHA:
+
+```yaml
+# Full version string
+uses: rsclarke/install-task@v2.0.0
+
+# Pinned to SHA (recommended)
+uses: rsclarke/install-task@<COMMIT_SHA> # v2.0.0
+```
+
 ## Platform Support
 
 This action supports **Linux** and **macOS** runners only. Windows is not supported.
@@ -35,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Task
-        uses: rsclarke/install-task@v1
+        uses: rsclarke/install-task@v2.0.0
 
       - name: Run Task
         run: task --list
