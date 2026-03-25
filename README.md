@@ -18,6 +18,13 @@ install-task-{runner.os}-{runner.arch}-{version}
 
 When no explicit version is provided, the latest release is resolved first so it still participates in caching.
 
+## Inputs
+
+| Input | Description | Required | Default |
+|-------|-------------|----------|---------|
+| `version` | Version of go-task/task to install (e.g., `v3.29.1`). If not specified, the latest release will be resolved automatically. | No | Latest |
+| `github-token` | GitHub token used to authenticate API and release download requests. Helps avoid rate limits when resolving the latest version or downloading assets. | No | `""` |
+
 ## Usage
 
 ```yaml
