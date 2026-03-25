@@ -18,61 +18,20 @@ inputs:
 outputs:
   task_path:
     description: "Path to the installed task binary"
-    value: ${{ steps.install-task.outputs.task_path }}
+    value: ${{ steps.check-task.outputs.install-dir }}
 
 runs:
   using: "composite"
   steps:
-    - name: Install Task
-      id: install-task
+    - name: Resolve version
+      id: resolve-version
       shell: bash
       run: |
-        echo "Install Task - Starting installation with checksum verification"
-
-        # Check for supported OS
-        if [[ "$RUNNER_OS" == "Windows" ]]; then
-          echo "Windows is not supported by this action"
-          exit 1
-        fi
-
-        # Determine OS and architecture
-        case "$RUNNER_OS" in
-          macOS)
-            OS="darwin"
-            CHECKSUM_CMD="shasum -a 256"
-            ;;
-          Linux)
-            OS="linux"
-            CHECKSUM_CMD="sha256sum"
-            ;;
-          *)
-            echo "Unsupported OS: $RUNNER_OS"
-            exit 1
-            ;;
-        esac
-
-        case "$RUNNER_ARCH" in
-          X64)
-            ARCH="amd64"
-            ;;
-          ARM64)
-            ARCH="arm64"
-            ;;
-          *)
-            echo "Unsupported architecture: $RUNNER_ARCH"
-            exit 1
-            ;;
-        esac
-
-        # Flag to track if we're using latest version
-        USING_LATEST=false
-
-        # Determine version to install
-        if [[ -z "${{ inputs.version }}" ]]; then
+        if [[ -n "${{ inputs.version }}" ]]; then
+          TASK_VERSION="${{ inputs.version }}"
+        else
           echo "No version specified, fetching latest release..."
-          USING_LATEST=true
 
-          # Use GitHub API to get latest release
           if [[ -n "${{ inputs.github-token }}" ]]; then
             AUTH_HEADER="Authorization: token ${{ inputs.github-token }}"
           else
@@ -83,95 +42,112 @@ runs:
 
           if [[ $? -eq 0 && -n "${LATEST_RELEASE}" ]]; then
             TASK_VERSION=$(echo "${LATEST_RELEASE}" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
-            if [[ -z "${TASK_VERSION}" ]]; then
-              echo "Failed to parse latest release version, falling back to default"
-              TASK_VERSION="v3.29.1"
-            fi
-          else
-            echo "Failed to fetch latest release, falling back to default"
-            TASK_VERSION="v3.29.1"
           fi
-        else
-          TASK_VERSION="${{ inputs.version }}"
-        fi
 
-        echo "Installing Task version: ${TASK_VERSION}"
-        VERSION_WITHOUT_V="${TASK_VERSION#v}"
-        TOOL_CACHE="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}"
-
-        # Check if requested version is already in the tool cache
-        # Only check cache if not using latest version
-        if [[ "${USING_LATEST}" == "false" && -f "${TOOL_CACHE}/task" ]]; then
-          echo "Found Task binary in the tool cache, verifying version..."
-
-          # Make executable if needed
-          chmod +x "${TOOL_CACHE}/task"
-
-          # Check if the version matches what we want
-          CACHED_VERSION=$("${TOOL_CACHE}/task" --version | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
-
-          if [[ "${CACHED_VERSION}" == "${VERSION_WITHOUT_V}" ]]; then
-            echo "Verified Task ${TASK_VERSION} in the tool cache"
-
-            # Add to PATH
-            echo "${TOOL_CACHE}" >> $GITHUB_PATH
-            echo "task_path=${TOOL_CACHE}" >> $GITHUB_OUTPUT
-
-            # Verify installation
-            "${TOOL_CACHE}/task" --version
-            exit 0
-          else
-            echo "Tool cache contains version ${CACHED_VERSION}, but we need ${VERSION_WITHOUT_V}. Will download required version."
-          fi
-        else
-          # If version not in cache or using latest, download and install
-          if [[ "${USING_LATEST}" == "true" ]]; then
-            echo "Always downloading latest release (${TASK_VERSION})"
-          else
-            echo "Task ${TASK_VERSION} not found in cache, installing..."
+          if [[ -z "${TASK_VERSION}" ]]; then
+            echo "Failed to resolve latest release version"
+            exit 1
           fi
         fi
 
-        # Download URL construction
+        # Ensure version has v prefix
+        if [[ "${TASK_VERSION}" != v* ]]; then
+          TASK_VERSION="v${TASK_VERSION}"
+        fi
+
+        echo "Resolved Task version: ${TASK_VERSION}"
+        echo "version=${TASK_VERSION}" >> $GITHUB_OUTPUT
+        echo "version-without-v=${TASK_VERSION#v}" >> $GITHUB_OUTPUT
+
+    - name: Restore tool cache
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      with:
+        path: |
+          ${{ runner.tool_cache }}/task
+        key: install-task-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve-version.outputs.version }}
+
+    - name: Check for cached task
+      id: check-task
+      shell: bash
+      run: |
+        case "$RUNNER_OS" in
+          macOS)  OS="darwin" ;;
+          Linux)  OS="linux" ;;
+          *)
+            echo "Unsupported OS: $RUNNER_OS"
+            exit 1
+            ;;
+        esac
+
+        case "$RUNNER_ARCH" in
+          X64)   ARCH="amd64" ;;
+          ARM64) ARCH="arm64" ;;
+          *)
+            echo "Unsupported architecture: $RUNNER_ARCH"
+            exit 1
+            ;;
+        esac
+
+        VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
+        INSTALL_DIR="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}"
+        COMPLETE_MARKER="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}.complete"
+
+        echo "os=${OS}" >> $GITHUB_OUTPUT
+        echo "arch=${ARCH}" >> $GITHUB_OUTPUT
+        echo "install-dir=${INSTALL_DIR}" >> $GITHUB_OUTPUT
+
+        if [[ -f "${COMPLETE_MARKER}" && -f "${INSTALL_DIR}/task" && -x "${INSTALL_DIR}/task" ]]; then
+          echo "Found cached Task ${VERSION_WITHOUT_V} at ${INSTALL_DIR}"
+          echo "found=true" >> $GITHUB_OUTPUT
+        else
+          echo "No cached Task ${VERSION_WITHOUT_V} found"
+          echo "found=false" >> $GITHUB_OUTPUT
+          mkdir -p "${INSTALL_DIR}"
+        fi
+
+    - name: Download and verify task
+      if: steps.check-task.outputs.found != 'true'
+      shell: bash
+      run: |
+        OS="${{ steps.check-task.outputs.os }}"
+        ARCH="${{ steps.check-task.outputs.arch }}"
+        INSTALL_DIR="${{ steps.check-task.outputs.install-dir }}"
+        TASK_VERSION="${{ steps.resolve-version.outputs.version }}"
+        VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
+
+        # Determine checksum command
+        case "$RUNNER_OS" in
+          macOS) CHECKSUM_CMD="shasum -a 256" ;;
+          Linux) CHECKSUM_CMD="sha256sum" ;;
+        esac
+
         TASK_DIST="task_${OS}_${ARCH}"
         DOWNLOAD_URL="https://github.com/go-task/task/releases/download/${TASK_VERSION}/${TASK_DIST}.tar.gz"
         CHECKSUMS_URL="https://github.com/go-task/task/releases/download/${TASK_VERSION}/task_checksums.txt"
 
-        # Create temp directory
         TEMP_DIR=$(mktemp -d)
 
-        # Download the archive
         echo "Downloading from: ${DOWNLOAD_URL}"
         curl -sL "${DOWNLOAD_URL}" -o "${TEMP_DIR}/task.tar.gz"
-
         if [[ $? -ne 0 ]]; then
           echo "Failed to download Task from ${DOWNLOAD_URL}"
           exit 1
         fi
 
-        # Verify checksum (mandatory)
         echo "Verifying checksum..."
-
-        # Download checksums file
         curl -sL "${CHECKSUMS_URL}" -o "${TEMP_DIR}/task_checksums.txt"
-
         if [[ $? -ne 0 ]]; then
           echo "Failed to download checksums from ${CHECKSUMS_URL}"
           exit 1
         fi
 
-        # Extract expected checksum for this distribution
         EXPECTED_CHECKSUM=$(grep "${TASK_DIST}.tar.gz" "${TEMP_DIR}/task_checksums.txt" | awk '{print $1}')
-
         if [[ -z "${EXPECTED_CHECKSUM}" ]]; then
           echo "Failed to find checksum for ${TASK_DIST}.tar.gz in checksums file"
           exit 1
         fi
 
-        # Calculate actual checksum
         ACTUAL_CHECKSUM=$(cd "${TEMP_DIR}" && ${CHECKSUM_CMD} task.tar.gz | awk '{print $1}')
-
-        # Compare checksums
         if [[ "${EXPECTED_CHECKSUM}" != "${ACTUAL_CHECKSUM}" ]]; then
           echo "Checksum verification failed!"
           echo "Expected: ${EXPECTED_CHECKSUM}"
@@ -182,28 +158,24 @@ runs:
 
         echo "Checksum verified successfully"
 
-        # Extract the archive
         tar -xzf "${TEMP_DIR}/task.tar.gz" -C "${TEMP_DIR}"
-
-        # Create tool cache directory
-        mkdir -p "${TOOL_CACHE}"
-
-        # Install to tool cache
-        mv "${TEMP_DIR}/task" "${TOOL_CACHE}/"
-        chmod +x "${TOOL_CACHE}/task"
-
-        # Add to PATH
-        echo "${TOOL_CACHE}" >> $GITHUB_PATH
-        echo "task_path=${TOOL_CACHE}" >> $GITHUB_OUTPUT
-
-        # Clean up
+        mv "${TEMP_DIR}/task" "${INSTALL_DIR}/"
+        chmod +x "${INSTALL_DIR}/task"
         rm -rf "${TEMP_DIR}"
 
-        # Verify installation
-        "${TOOL_CACHE}/task" --version
+        # Write .complete sentinel
+        touch "${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}.complete"
 
-    - name: Verify Task Installation
+        echo "Installed Task ${TASK_VERSION} to ${INSTALL_DIR}"
+
+    - name: Add task to PATH
       shell: bash
       run: |
-        echo "Task installed at: ${{ steps.install-task.outputs.task_path }}"
-        task --version
+        echo "${{ steps.check-task.outputs.install-dir }}" >> $GITHUB_PATH
+        echo "task_path=${{ steps.check-task.outputs.install-dir }}" >> $GITHUB_OUTPUT
+
+    - name: Verify task installation
+      shell: bash
+      run: |
+        echo "Task installed at: ${{ steps.check-task.outputs.install-dir }}"
+        "${{ steps.check-task.outputs.install-dir }}/task" --version
