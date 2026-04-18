@@ -10,10 +10,6 @@ inputs:
     description: "Version of go-task/task to install (e.g., v3.29.1). If not specified, latest release will be used."
     required: false
     default: ""
-  github-token:
-    description: "GitHub token to use for API requests. Only needed if fetching latest version."
-    required: false
-    default: ""
 
 outputs:
   task_path:
@@ -32,13 +28,7 @@ runs:
         else
           echo "No version specified, fetching latest release..."
 
-          if [[ -n "${{ inputs.github-token }}" ]]; then
-            AUTH_HEADER="Authorization: token ${{ inputs.github-token }}"
-          else
-            AUTH_HEADER=""
-          fi
-
-          LATEST_RELEASE=$(curl -s -H "${AUTH_HEADER}" https://api.github.com/repos/go-task/task/releases/latest)
+          LATEST_RELEASE=$(curl -s -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/repos/go-task/task/releases/latest)
 
           if [[ $? -eq 0 && -n "${LATEST_RELEASE}" ]]; then
             TASK_VERSION=$(echo "${LATEST_RELEASE}" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
@@ -116,10 +106,7 @@ runs:
         VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
 
         # Build auth header for GitHub API and release downloads
-        CURL_AUTH=()
-        if [[ -n "${{ inputs.github-token }}" ]]; then
-          CURL_AUTH=(-H "Authorization: token ${{ inputs.github-token }}")
-        fi
+        CURL_AUTH=(-H "Authorization: Bearer ${{ github.token }}")
 
         # Determine checksum command
         case "$RUNNER_OS" in
