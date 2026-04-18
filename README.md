@@ -24,21 +24,31 @@ This action supports **Linux** and **macOS** runners only. Windows is not suppor
 
 The action uses [`actions/cache`](https://github.com/actions/cache) to persist the tool cache across workflow runs. On a cache hit the download and verification steps are skipped entirely, using a `.complete` sentinel file to validate cache integrity.
 
-The cache key includes the runner OS, architecture, and resolved Task version:
+When cache usage is enabled, the cache key includes the runner OS, architecture, and resolved Task version:
 
 ```
 install-task-{runner.os}-{runner.arch}-{version}
 ```
 
-When no explicit version is provided, the latest release is resolved first so it still participates in caching.
+When no explicit version is provided, the latest release is resolved first so it still participates in caching. Set `use-cache: "false"` to skip cache restore/save and force a fresh download.
 
 ## Inputs
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
 | `version` | Version of go-task/task to install (e.g., `v3.29.1`). If not specified, the latest release will be resolved automatically. | No | Latest |
+| `use-cache` | Whether to restore and save the GitHub Actions cache for the Task tool cache. Set to `false` to force a fresh download. | No | `true` |
 
 The action uses the caller workflow's `GITHUB_TOKEN` automatically via `github.token`, so no token input is required.
+
+To force a fresh download and verification on every run:
+
+```yaml
+- name: Install Task from a fresh download
+  uses: rsclarke/install-task@v2.0.0
+  with:
+    use-cache: "false"
+```
 
 ## Usage
 

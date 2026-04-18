@@ -10,11 +10,15 @@ inputs:
     description: "Version of go-task/task to install (e.g., v3.29.1). If not specified, latest release will be used."
     required: false
     default: ""
+  use-cache:
+    description: "Whether to restore and save the GitHub Actions cache for the Task tool cache."
+    required: false
+    default: "true"
 
 outputs:
   task_path:
     description: "Path to the installed task binary"
-    value: ${{ steps.check-task.outputs.install-dir }}
+    value: ${{ steps.resolve-install-dir.outputs.install-dir }}
 
 runs:
   using: "composite"
@@ -50,14 +54,15 @@ runs:
         echo "version-without-v=${TASK_VERSION#v}" >> $GITHUB_OUTPUT
 
     - name: Restore tool cache
+      if: inputs.use-cache == 'true'
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: |
           ${{ runner.tool_cache }}/task
         key: install-task-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve-version.outputs.version }}
 
-    - name: Check for cached task
-      id: check-task
+    - name: Resolve install directory
+      id: resolve-install-dir
       shell: bash
       run: |
         case "$RUNNER_OS" in
@@ -80,11 +85,19 @@ runs:
 
         VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
         INSTALL_DIR="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}"
-        COMPLETE_MARKER="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}.complete"
 
         echo "os=${OS}" >> $GITHUB_OUTPUT
         echo "arch=${ARCH}" >> $GITHUB_OUTPUT
         echo "install-dir=${INSTALL_DIR}" >> $GITHUB_OUTPUT
+
+    - name: Check for cached task
+      id: check-task
+      if: inputs.use-cache == 'true'
+      shell: bash
+      run: |
+        VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
+        INSTALL_DIR="${{ steps.resolve-install-dir.outputs.install-dir }}"
+        COMPLETE_MARKER="${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${{ steps.resolve-install-dir.outputs.arch }}.complete"
 
         if [[ -f "${COMPLETE_MARKER}" && -f "${INSTALL_DIR}/task" && -x "${INSTALL_DIR}/task" ]]; then
           echo "Found cached Task ${VERSION_WITHOUT_V} at ${INSTALL_DIR}"
@@ -96,14 +109,16 @@ runs:
         fi
 
     - name: Download and verify task
-      if: steps.check-task.outputs.found != 'true'
+      if: inputs.use-cache != 'true' || steps.check-task.outputs.found != 'true'
       shell: bash
       run: |
-        OS="${{ steps.check-task.outputs.os }}"
-        ARCH="${{ steps.check-task.outputs.arch }}"
-        INSTALL_DIR="${{ steps.check-task.outputs.install-dir }}"
+        OS="${{ steps.resolve-install-dir.outputs.os }}"
+        ARCH="${{ steps.resolve-install-dir.outputs.arch }}"
+        INSTALL_DIR="${{ steps.resolve-install-dir.outputs.install-dir }}"
         TASK_VERSION="${{ steps.resolve-version.outputs.version }}"
         VERSION_WITHOUT_V="${{ steps.resolve-version.outputs.version-without-v }}"
+
+        mkdir -p "${INSTALL_DIR}"
 
         # Build auth header for GitHub API and release downloads
         CURL_AUTH=(-H "Authorization: Bearer ${{ github.token }}")
@@ -156,7 +171,6 @@ runs:
         chmod +x "${INSTALL_DIR}/task"
         rm -rf "${TEMP_DIR}"
 
-        # Write .complete sentinel
         touch "${RUNNER_TOOL_CACHE}/task/${VERSION_WITHOUT_V}/${ARCH}.complete"
 
         echo "Installed Task ${TASK_VERSION} to ${INSTALL_DIR}"
@@ -164,11 +178,11 @@ runs:
     - name: Add task to PATH
       shell: bash
       run: |
-        echo "${{ steps.check-task.outputs.install-dir }}" >> $GITHUB_PATH
-        echo "task_path=${{ steps.check-task.outputs.install-dir }}" >> $GITHUB_OUTPUT
+        echo "${{ steps.resolve-install-dir.outputs.install-dir }}" >> $GITHUB_PATH
+        echo "task_path=${{ steps.resolve-install-dir.outputs.install-dir }}" >> $GITHUB_OUTPUT
 
     - name: Verify task installation
       shell: bash
       run: |
-        echo "Task installed at: ${{ steps.check-task.outputs.install-dir }}"
-        "${{ steps.check-task.outputs.install-dir }}/task" --version
+        echo "Task installed at: ${{ steps.resolve-install-dir.outputs.install-dir }}"
+        "${{ steps.resolve-install-dir.outputs.install-dir }}/task" --version
