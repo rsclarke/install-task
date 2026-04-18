@@ -10,10 +10,10 @@ When referencing this action, either use the full version string or pin to a com
 
 ```yaml
 # Full version string
-uses: rsclarke/install-task@v2.0.0
+uses: rsclarke/install-task@v3.0.0
 
 # Pinned to SHA (recommended)
-uses: rsclarke/install-task@<COMMIT_SHA> # v2.0.0
+uses: rsclarke/install-task@<COMMIT_SHA> # v3.0.0
 ```
 
 ## Platform Support
@@ -45,7 +45,7 @@ To force a fresh download and verification on every run:
 
 ```yaml
 - name: Install Task from a fresh download
-  uses: rsclarke/install-task@v2.0.0
+  uses: rsclarke/install-task@v3.0.0
   with:
     use-cache: "false"
 ```
@@ -57,10 +57,10 @@ jobs:
   build:
     runs-on: ubuntu-latest # or macOS-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Task
-        uses: rsclarke/install-task@v2.0.0
+        uses: rsclarke/install-task@v3.0.0
 
       - name: Run Task
         run: task --list
