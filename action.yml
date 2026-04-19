@@ -32,7 +32,7 @@ runs:
         else
           echo "No version specified, fetching latest release..."
 
-          LATEST_RELEASE=$(curl -s -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/repos/go-task/task/releases/latest)
+          LATEST_RELEASE=$(curl -fsSL -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/repos/go-task/task/releases/latest)
 
           if [[ $? -eq 0 && -n "${LATEST_RELEASE}" ]]; then
             TASK_VERSION=$(echo "${LATEST_RELEASE}" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
@@ -120,9 +120,6 @@ runs:
 
         mkdir -p "${INSTALL_DIR}"
 
-        # Build auth header for GitHub API and release downloads
-        CURL_AUTH=(-H "Authorization: Bearer ${{ github.token }}")
-
         # Determine checksum command
         case "$RUNNER_OS" in
           macOS) CHECKSUM_CMD="shasum -a 256" ;;
@@ -136,14 +133,14 @@ runs:
         TEMP_DIR=$(mktemp -d)
 
         echo "Downloading from: ${DOWNLOAD_URL}"
-        curl -sL "${CURL_AUTH[@]}" "${DOWNLOAD_URL}" -o "${TEMP_DIR}/task.tar.gz"
+        curl -fsSL "${DOWNLOAD_URL}" -o "${TEMP_DIR}/task.tar.gz"
         if [[ $? -ne 0 ]]; then
           echo "Failed to download Task from ${DOWNLOAD_URL}"
           exit 1
         fi
 
         echo "Verifying checksum..."
-        curl -sL "${CURL_AUTH[@]}" "${CHECKSUMS_URL}" -o "${TEMP_DIR}/task_checksums.txt"
+        curl -fsSL "${CHECKSUMS_URL}" -o "${TEMP_DIR}/task_checksums.txt"
         if [[ $? -ne 0 ]]; then
           echo "Failed to download checksums from ${CHECKSUMS_URL}"
           exit 1
